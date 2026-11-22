@@ -1,0 +1,71 @@
+[package]
+name = "better-task-manager"
+description = "A fast, native Task Manager replacement for Windows 11"
+version = "1.0.0"
+authors = ["TabanAziz"]
+license = "MIT"
+repository = "https://github.com/TabanAziz/BetterTaskManager"
+readme = "README.md"
+edition = "2021"
+rust-version = "1.87"
+publish = false
+
+[[bin]]
+path = "src/main.rs"
+name = "BTM"
+
+[features]
+# Invented data for README screenshots. Never in releases.
+demo = []
+# Start-up timing log. Off in releases: elevated code must not write to %TEMP%.
+trace = []
+
+[dependencies.windows-sys]
+version = "0.59"
+features = [
+  "Wdk_Foundation",
+  "Win32_Globalization",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_NetworkManagement_Ndis",
+  "Win32_NetworkManagement_NetManagement",
+  "Win32_NetworkManagement_WiFi",
+  "Win32_Networking_WinSock",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
+  "Win32_Storage_Packaging_Appx",
+  "Win32_System_Com",
+  "Win32_System_DataExchange",
+  "Win32_System_Environment",
+  "Win32_System_IO",
+  "Win32_System_Ioctl",
+  "Win32_System_Kernel",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_Performance",
+  "Win32_System_Power",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Registry",
+  "Win32_System_RemoteDesktop",
+  "Win32_System_Services",
+  "Win32_System_SystemInformation",
+  "Win32_System_SystemServices",
+  "Win32_System_Threading",
+  "Win32_UI_Controls",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  "Win32_UI_WindowsAndMessaging",
+]
+
+[build-dependencies]
+embed-resource = "2.5"
+
+[profile.release]
+panic = "abort"
+strip = "symbols"
+lto = "fat"
+codegen-units = 1
