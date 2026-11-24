@@ -110,7 +110,7 @@ cost money). Compare the file with `SHA256SUMS.txt` from the release, then choos
 *More info > Run anyway*:
 
 ```powershell
-Get-FileHash .\BTM-Setup-1.1.0.exe
+Get-FileHash .\BTM-Setup-1.1.1.exe
 ```
 
 ### Portable

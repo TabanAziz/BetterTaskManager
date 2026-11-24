@@ -93,7 +93,6 @@ pub struct Fonts {
     pub body: HFONT,
     pub body_semi: HFONT,
     pub small: HFONT,
-    pub caption: HFONT,
     pub title: HFONT,
     pub hdr_val: HFONT,
     pub nav: HFONT,
@@ -129,7 +128,6 @@ impl Fonts {
             body: make_font(text, p(12.0), 400, AA),
             body_semi: make_font(text_semi, p(12.0), 600, CT),
             small: make_font(small, p(12.0), 400, AA),
-            caption: make_font(small, p(12.0), 400, AA),
             title: make_font(disp_semi, p(14.0), 600, CT),
             hdr_val: make_font(disp, p(17.0), 400, AA),
             nav: make_font(text, p(14.0), 400, AA),
@@ -147,7 +145,6 @@ impl Fonts {
             self.body,
             self.body_semi,
             self.small,
-            self.caption,
             self.title,
             self.hdr_val,
             self.nav,
@@ -403,13 +400,7 @@ impl App {
 
     fn draw_titlebar(&mut self, w: i32) {
         let s = self.s;
-        // App icon + name.
-        let ico = app_icon(16.0 * s);
-        self.cv.icon(ico, self.px(16.0), self.px(20.0), (16.0 * s).round() as i32);
-        let fc = self.f.caption;
         let fg = self.th.chrome_fg;
-        self.cv.text(fc, crate::product::NAME, (self.px(48.0), 0, self.px(178.0), self.px(56.0)), fg, DT_L);
-        // Search box.
         let (x, y, sw, sh) = self.search_rect();
         theme_visuals::paint_motif(
             self.cv.hdc,
@@ -978,18 +969,6 @@ impl App {
     }
 }
 
-pub fn app_icon(size: f32) -> isize {
-    use std::sync::atomic::{AtomicIsize, Ordering};
-    static SMALL: AtomicIsize = AtomicIsize::new(0);
-    let h = SMALL.load(Ordering::Acquire);
-    if h != 0 {
-        return h;
-    }
-    let v = window::app_icon(size.round() as i32);
-    SMALL.store(v, Ordering::Release);
-    v
-}
-
 fn run_new_task(hwnd: HWND) {
     // The shell's own "Ausführen" dialog (shell32 ordinal 61), as Task Manager uses.
     type RunFileDlg = unsafe extern "system" fn(HWND, HICON, *const u16, *const u16, *const u16, u32);
@@ -1159,9 +1138,6 @@ pub(super) unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, l
                 let (sx, sy, sw, sh) = a.search_rect();
                 if pt.x >= sx && pt.x < sx + sw && pt.y >= sy && pt.y < sy + sh {
                     return HTCLIENT as isize;
-                }
-                if pt.x < a.px(40.0) && pt.y < a.px(48.0) {
-                    return HTSYSMENU as isize;
                 }
                 return HTCAPTION as isize;
             }

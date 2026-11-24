@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1
+
+- Removed the duplicate app icon and title below the Windows title bar.
+- Added visual theme previews and improved contrast for navigation and resource usage.
+- App history shows its first results while Windows continues loading the 30-day totals.
+- Open file location follows BetterExplorer when it is configured as the default folder manager and BTM is running without elevation.
+
 ## 1.1.0 - 2026-11-24
 
 - Choose System, Light, Dark or one of six BetterExplorer themes in Settings.
