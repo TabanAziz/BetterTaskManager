@@ -13,6 +13,7 @@ use super::table::{col, heated, number, Cell, Drag, Icon, Part, Row, Surface, Ta
 use super::{App, Page, Tool};
 use crate::admin::AdminTask;
 use crate::model::{Proc, ProcKind};
+use crate::pages::history::History;
 use crate::pages::{self, history, services, startup, users, Data, Feed};
 use crate::shell;
 use crate::util::{fmt_min_step, fmt_num, wide};
@@ -41,7 +42,7 @@ pub struct Lists {
     startup: Table,
     users: Table,
     services: Table,
-    apps: Option<Result<Vec<history::AppUsage>, String>>,
+    apps: Option<History>,
     apps_loaded: Option<Instant>,
     entries: Option<Vec<startup::Entry>>,
     sessions: Option<Vec<users::Session>>,
@@ -205,9 +206,15 @@ pub fn on_message(a: &mut App, wparam: usize) {
 fn absorb(a: &mut App, feeds: Vec<Data>) {
     for data in feeds {
         match data {
-            Data::History(apps) => {
-                a.lists.apps_loaded = apps.is_ok().then(Instant::now);
-                a.lists.apps = Some(apps);
+            Data::History(history) => {
+                match history {
+                    // Keep the last finished totals on screen during a refresh.
+                    History::Loading(_) if a.lists.apps_loaded.is_some() => continue,
+                    History::Complete(_) | History::Incomplete(_) => a.lists.apps_loaded = Some(Instant::now()),
+                    History::Unavailable => a.lists.apps_loaded = None,
+                    History::Loading(_) => {}
+                }
+                a.lists.apps = Some(history);
             }
             Data::Startup(entries) => a.lists.entries = Some(entries),
             Data::Users(sessions) => a.lists.sessions = Some(sessions),
@@ -229,13 +236,13 @@ pub fn rebuild(a: &mut App) {
     let mem_total = a.snap.as_ref().map_or(1, |s| s.perf.mem.total.max(1));
     let lists = &mut a.lists;
     match a.page {
-        Page::History => {
-            let apps = match &lists.apps {
-                Some(Ok(apps)) => apps.as_slice(),
-                _ => return,
-            };
-            lists.history.set_rows(history_rows(apps, procs, &needle));
-        }
+        Page::History => match &lists.apps {
+            Some(History::Loading(apps) | History::Complete(apps) | History::Incomplete(apps)) => {
+                lists.history.set_rows(history_rows(apps, procs, &needle));
+            }
+            Some(History::Unavailable) => lists.history.set_rows(Vec::new()),
+            None => {}
+        },
         Page::Startup => {
             if let Some(entries) = &lists.entries {
                 lists.startup.set_rows(startup_rows(entries, &needle));
@@ -509,9 +516,11 @@ impl App {
         let mut top = self.page_header(x, y, w, title, &tools);
 
         let note = match page {
-            Page::History => Some(
-                "Network usage of the last 30 days, as recorded by Windows. CPU time counts the processes running now.",
-            ),
+            Page::History => Some(match self.lists.apps {
+                Some(History::Loading(_)) => "Reading more connection profiles… Network totals are updating.",
+                Some(History::Incomplete(_)) => "Windows did not return every connection profile. Network totals are incomplete.",
+                _ => "Network usage of the last 30 days, as recorded by Windows. CPU time counts the processes running now.",
+            }),
             Page::Startup => {
                 let on = self.lists.entries.as_ref().map(|all| all.iter().filter(|e| e.enabled).count());
                 on.map(|_| "Disabling keeps the entry: it just does not start with Windows any more.")
@@ -532,7 +541,10 @@ impl App {
             _ => Vec::new(),
         };
         let loaded = match page {
-            Page::History => self.lists.apps.as_ref().map(|r| r.as_ref().err().cloned()),
+            Page::History => self.lists.apps.as_ref().map(|history| {
+                matches!(history, History::Unavailable)
+                    .then(|| "Windows did not return its network usage history.".to_string())
+            }),
             Page::Startup => self.lists.entries.as_ref().map(|_| None),
             Page::Users => self.lists.sessions.as_ref().map(|_| None),
             _ => self.lists.service_list.as_ref().map(|r| r.as_ref().err().cloned()),

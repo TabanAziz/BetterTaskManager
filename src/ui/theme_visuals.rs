@@ -7,16 +7,65 @@ use windows_sys::Win32::{
     },
 };
 
-use super::gfx::{cr, mix};
-use super::theme::{Theme, ThemePreference};
+use super::gfx::{cr, mix, Canvas};
+use super::theme::{RowTint, Theme, ThemePreference};
+
+pub fn paint_preview(canvas: &mut Canvas, bounds: RECT, colors: &Theme, scale: f32) {
+    let RECT { left, top, right, bottom } = bounds;
+    let w = right - left;
+    let h = bottom - top;
+    if w < 20 || h < 12 {
+        return;
+    }
+    let chrome = colors.color_for(0x212121, colors.title_bg, colors.title_bg);
+    let nav = colors.color_for(0x202020, colors.nav_bg, colors.nav_bg);
+    canvas.fill(left, top, w, h, colors.divider);
+    let mut block = |x0, y0, x1, y1, color| {
+        let x = |unit| left + 1 + (w - 2) * unit / 144;
+        let y = |unit| top + 1 + (h - 2) * unit / 40;
+        canvas.fill(x(x0), y(y0), x(x1) - x(x0), y(y1) - y(y0), color);
+    };
+    block(0, 0, 144, 40, colors.content);
+    block(0, 0, 144, 14, chrome);
+    block(0, 14, 28, 40, nav);
+    block(4, 19, 24, 27, colors.chrome_sel);
+    block(5, 20, 7, 26, colors.accent);
+    block(10, 21, 20, 24, colors.chrome_fg);
+    block(10, 31, 20, 33, colors.text2);
+    block(7, 5, 12, 10, colors.accent);
+    block(16, 6, 38, 9, colors.chrome_fg);
+    block(43, 4, 92, 11, colors.search_bg);
+    block(28, 14, 144, 20, colors.header_hot);
+    block(28, 26, 144, 27, colors.divider);
+    block(28, 33, 144, 34, colors.divider);
+    for (y, end) in [(22, 61), (29, 79), (36, 67)] {
+        block(34, y, end, y + 2, colors.text2);
+    }
+    for (x, levels) in [(99, [3, 1, 0]), (112, [4, 2, 1]), (125, [5, 2, 0])] {
+        for (i, level) in levels.into_iter().enumerate() {
+            let y = 20 + i as i32 * 7;
+            block(x, y, x + 12, y + 6, colors.heat_cell(level, RowTint::Normal).0);
+        }
+    }
+    let motif = RECT { left: left + w * 94 / 144, top: top + 1, right: right - 2, bottom: top + 1 + (h - 2) * 14 / 40 };
+    paint_art(canvas.hdc, motif, colors, (32.0 * scale).round() as i32);
+}
 
 pub fn paint_motif(dc: HDC, bounds: RECT, colors: &Theme, scale: f32) {
+    let width = bounds.right - bounds.left;
+    let limit = (32.0 * scale).round() as i32;
+    if width < limit {
+        return;
+    }
+    paint_art(dc, bounds, colors, limit);
+}
+
+fn paint_art(dc: HDC, bounds: RECT, colors: &Theme, limit: i32) {
     use ThemePreference::*;
 
     let Some(theme) = colors.custom else { return };
-    let width = bounds.right - bounds.left;
-    let height = (bounds.bottom - bounds.top).min((32.0 * scale).round() as i32);
-    if width < (32.0 * scale).round() as i32 || height < 3 {
+    let height = (bounds.bottom - bounds.top).min(limit);
+    if bounds.right <= bounds.left || height < 3 {
         return;
     }
     let saved = unsafe { SaveDC(dc) };

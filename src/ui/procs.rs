@@ -11,6 +11,7 @@ use windows_sys::Win32::UI::Shell::{SHObjectProperties, SHOP_FILEPATH};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use super::gfx::*;
+use super::theme::RowTint;
 use super::{App, Hit, Page, Tool, G_CHEV_D, G_CHEV_R, G_CHEV_U, G_CLOSE, G_END, G_LEAF, G_MORE, G_RUN, G_SHIELD};
 use crate::model::{Proc, ProcKind};
 use crate::util::{fmt_int, fmt_min_step, fmt_num, wide};
@@ -99,6 +100,7 @@ pub struct Grid {
     pub scroll: f32,
     pub sel: Option<RowKey>,
     pub rows: Vec<Row>,
+    heat_peaks: [f64; 5],
 }
 
 fn col(id: ColId, title: &'static str, w: f32, right: bool, visible: bool, heat: bool) -> Col {
@@ -126,6 +128,7 @@ impl Grid {
             scroll: 0.0,
             sel: None,
             rows: Vec::new(),
+            heat_peaks: [0.0; 5],
         }
     }
     pub fn details() -> Grid {
@@ -146,6 +149,7 @@ impl Grid {
             scroll: 0.0,
             sel: None,
             rows: Vec::new(),
+            heat_peaks: [0.0; 5],
         }
     }
 }
@@ -274,6 +278,7 @@ pub fn rebuild(a: &mut App) {
     match a.page {
         Page::Procs => {
             let rows = build_groups(&snap.procs, &needle, &a.expanded, a.procs.sort, a.procs.desc);
+            a.procs.heat_peaks = heat_peaks(&rows);
             a.procs.rows = rows;
             clamp_scroll(a, Page::Procs);
         }
@@ -482,17 +487,59 @@ fn build_groups(
 
 // ---------------------------------------------------------------------- formatting
 
-fn heat_level(id: ColId, r: &Row, a: &App) -> usize {
-    let mem_total = a.snap.as_ref().map(|s| s.perf.mem.total).unwrap_or(1).max(1) as f64;
-    let (v, t): (f64, [f64; 5]) = match id {
-        ColId::Cpu => (r.cpu as f64, [1.0, 15.0, 30.0, 50.0, 75.0]),
-        ColId::Gpu => (r.gpu as f64, [1.0, 15.0, 30.0, 50.0, 75.0]),
-        ColId::Mem => (r.mem as f64 / mem_total * 100.0, [1.5, 15.0, 30.0, 50.0, 75.0]),
-        ColId::Disk => (r.disk.unwrap_or(0.0) as f64 / 1048576.0, [1.5, 10.0, 50.0, 100.0, 300.0]),
-        ColId::Net => (r.net.unwrap_or(0.0) as f64 * 8.0 / 1e6, [1.0, 10.0, 50.0, 100.0, 500.0]),
+const HEAT_COLUMNS: [ColId; 5] = [ColId::Cpu, ColId::Mem, ColId::Disk, ColId::Gpu, ColId::Net];
+
+fn heat_value(id: ColId, row: &Row) -> f64 {
+    match id {
+        ColId::Cpu => f64::from(row.cpu),
+        ColId::Mem => row.mem as f64 / 1048576.0,
+        ColId::Disk => f64::from(row.disk.unwrap_or(0.0)) / 1048576.0,
+        ColId::Gpu => f64::from(row.gpu),
+        ColId::Net => f64::from(row.net.unwrap_or(0.0)) * 8.0 / 1e6,
+        _ => 0.0,
+    }
+}
+
+fn heat_peaks(rows: &[Row]) -> [f64; 5] {
+    let mut peaks: [f64; 5] = [0.0; 5];
+    for row in rows.iter().filter(|row| row.values && row.depth == 0) {
+        for (peak, id) in peaks.iter_mut().zip(HEAT_COLUMNS) {
+            *peak = peak.max(heat_value(id, row));
+        }
+    }
+    peaks
+}
+
+fn heat_level(id: ColId, value: f64, peak: f64, mem_total_mb: f64) -> usize {
+    let (absolute, thresholds, relative_floor) = match id {
+        ColId::Cpu | ColId::Gpu => (value, [1.0, 15.0, 30.0, 50.0, 75.0], 15.0),
+        ColId::Mem => (value / mem_total_mb * 100.0, [1.5, 15.0, 30.0, 50.0, 75.0], 256.0),
+        ColId::Disk => (value, [1.5, 10.0, 50.0, 100.0, 300.0], 10.0),
+        ColId::Net => (value, [1.0, 10.0, 50.0, 100.0, 500.0], 10.0),
         _ => return 0,
     };
-    t.iter().filter(|&&x| v >= x).count()
+    // Compare against meaningful activity in the current list as well as the absolute thresholds.
+    // Use the same peak for every sort order and ignore tiny peaks when the system is mostly idle.
+    let fraction = value / peak.max(relative_floor);
+    let relative = [0.08, 0.20, 0.38, 0.65, 0.90].iter().filter(|&&threshold| fraction >= threshold).count();
+    relative.max(thresholds.iter().filter(|&&threshold| absolute >= threshold).count())
+}
+
+#[cfg(test)]
+#[test]
+fn meaningful_peaks_stand_out_while_low_activity_remains_subtle() {
+    let ram_mb = 131_072.0;
+    for (id, small, peak) in [
+        (ColId::Mem, 16.0, 850.0),
+        (ColId::Cpu, 0.5, 33.0),
+        (ColId::Gpu, 0.7, 24.0),
+        (ColId::Disk, 0.3, 22.0),
+        (ColId::Net, 0.2, 12.0),
+    ] {
+        assert_eq!(heat_level(id, small, small, ram_mb), 0);
+        assert_eq!(heat_level(id, peak * 0.5, peak, ram_mb), 3);
+        assert_eq!(heat_level(id, peak, peak, ram_mb), 5);
+    }
 }
 
 fn cell_text(id: ColId, r: &Row) -> String {
@@ -671,7 +718,7 @@ impl App {
             c,
             1.0,
         );
-        self.cv.text(fb, "Set up", (bx2, y, btn_w, bh), self.th.accent_text(), DT_C);
+        self.cv.text(fb, "Set up", (bx2, y, btn_w, bh), self.th.accent_text_on(c), DT_C);
         self.hit(bx2, y + self.px(4.0), btn_w, bh - self.px(8.0), Hit::InfoSetup);
         let cx = bx + bw - close_w;
         if self.hover == Hit::InfoClose {
@@ -681,7 +728,7 @@ impl App {
                 (close_w - self.px(4.0)) as f32,
                 (bh - self.px(8.0)) as f32,
                 self.px(4.0) as f32,
-                self.th.color_for(0x3A3A3A, 0x3A3A3A, self.th.header_hot),
+                self.th.control_bg(true),
                 1.0,
             );
         }
@@ -789,6 +836,7 @@ impl App {
             g.scroll
         };
         self.cv.clip_rect(Some((x, body_y, w, body_h)));
+        self.cv.clip_pixels(Some(RECT { left: x, top: body_y, right: x + w, bottom: body_y + body_h }));
         let first = (scroll / rh as f32).floor().max(0.0) as usize;
         let off = -(scroll - first as f32 * rh as f32).round() as i32;
         let visible = (body_h / rh + 2) as usize;
@@ -797,6 +845,8 @@ impl App {
         let fsm = self.f.icon_small;
         let icon_px = (16.0 * self.s).round() as i32;
         let def_icon = crate::meta::default_icon_if_loaded();
+        let mem_total_mb = self.snap.as_ref().map_or(1.0, |s| (s.perf.mem.total as f64 / 1048576.0).max(1.0));
+        let peaks = self.procs.heat_peaks;
         for vi in 0..visible {
             let ri = first + vi;
             if ri >= n {
@@ -812,17 +862,14 @@ impl App {
                 g.sel.as_ref() == Some(&row.key)
             };
             let hovered = matches!(self.hover, Hit::Row(p, i) | Hit::Chevron(p, i) if p == page && i == ri);
-            let overlay = if selected {
-                if dark {
-                    0.10
-                } else {
-                    0.08
-                }
+            let tint = if selected {
+                RowTint::Selected
             } else if hovered {
-                0.05
+                RowTint::Hover
             } else {
-                0.0
+                RowTint::Normal
             };
+            let overlay = tint.strength(dark);
             for &(ci, cx, cw) in &cols {
                 let (id, right, heat) = {
                     let g = if page == Page::Procs { &self.procs } else { &self.details };
@@ -831,19 +878,17 @@ impl App {
                 };
                 let x0 = x + cx;
                 let pad = self.px(8.0);
+                let mut cell_fg = th_text;
                 if heat && row.values && page == Page::Procs {
-                    let lvl = heat_level(id, &row, self);
-                    let mut bg = self.th.heat[lvl.min(5)];
-                    let unknown = (id == ColId::Disk && row.disk.is_none()) || (id == ColId::Net && row.net.is_none());
-                    if unknown {
-                        bg = self.th.heat[0];
-                    }
+                    let peak = HEAT_COLUMNS.iter().position(|&column| column == id).map_or(0.0, |i| peaks[i]);
+                    let level = heat_level(id, heat_value(id, &row), peak, mem_total_mb);
+                    let (bg, ink) = self.th.heat_cell(level, tint);
+                    cell_fg = ink;
                     self.cv.fill(x0, ry, cw, rh, bg);
                     let edge = self.th.color_for(0x484848, 0x484848, divider);
                     let line = mix(bg, edge, 0.4);
                     self.cv.vline(x0, ry, rh, line);
-                }
-                if overlay > 0.0 {
+                } else if overlay > 0.0 {
                     let oc = self.th.overlay;
                     self.cv.blend(x0, ry, cw, rh, oc, overlay);
                 }
@@ -891,7 +936,7 @@ impl App {
                         let col = if page == Page::Details && id == ColId::DStatus && row.suspended {
                             th_text2
                         } else {
-                            th_text
+                            cell_fg
                         };
                         self.cv.text(fbody, &t, (x0 + pad, ry, cw - 2 * pad, rh), col, fl);
                     }
@@ -918,6 +963,7 @@ impl App {
             self.cv.text(fbody, msg, (x, body_y + self.px(20.0), w, self.px(24.0)), th_text2, DT_C);
         }
         self.cv.clip_rect(None);
+        self.cv.clip_pixels(None);
         self.cv.clip_rect(Some((x, y, w, h)));
 
         // ---------------- scrollbar (thin, Windows 11 style)

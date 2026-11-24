@@ -267,17 +267,17 @@ fn push_hist(h: &mut Vec<f32>, v: f32) {
     h.push(v);
 }
 
-pub fn is_elevated() -> bool {
+pub fn token_elevation() -> Option<bool> {
     unsafe {
         let mut tok = std::ptr::null_mut();
         if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut tok) == 0 {
-            return false;
+            return None;
         }
         let mut e = TOKEN_ELEVATION { TokenIsElevated: 0 };
         let mut ret = 0u32;
         let ok = GetTokenInformation(tok, TokenElevation, &mut e as *mut _ as *mut c_void, 4, &mut ret) != 0;
         CloseHandle(tok);
-        ok && e.TokenIsElevated != 0
+        ok.then_some(e.TokenIsElevated != 0)
     }
 }
 
@@ -292,7 +292,7 @@ impl Sampler {
             };
             si.max(nlp).max(1)
         };
-        let elevated = is_elevated();
+        let elevated = token_elevation().unwrap_or(false);
         Sampler {
             buf: ProcBuf::new(),
             tracked: HashMap::with_capacity(1024),

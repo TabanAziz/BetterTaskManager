@@ -10,6 +10,7 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse as vk;
 
 use super::gfx::*;
 use super::plot::Area;
+use super::theme::RowTint;
 use super::{Fonts, Hit, Theme, G_CHEV_D, G_CHEV_R, G_CHEV_U};
 use crate::meta::Meta;
 
@@ -407,29 +408,29 @@ impl Table {
             let Some(row) = self.row(index) else { break };
             let child = self.flat[index].1.is_some();
             let (clip_top, clip_bottom) = (y.max(top), (y + rh).min(bottom));
-            let overlay = if self.selected.as_deref() == Some(row.id.as_str()) {
-                if th.dark {
-                    0.10
-                } else {
-                    0.08
-                }
+            let tint = if self.selected.as_deref() == Some(row.id.as_str()) {
+                RowTint::Selected
             } else if matches!(s.hover, Hit::List(Part::Row(i) | Part::Chevron(i)) if i == index) {
-                0.05
+                RowTint::Hover
             } else {
-                0.0
+                RowTint::Normal
             };
+            let overlay = tint.strength(th.dark);
 
             let mut x = area.x;
             for (i, ((c, &w), cell)) in self.cols.iter().zip(widths).zip(&row.cells).enumerate() {
-                if c.heat {
-                    let back = th.heat[cell.heat.min(5)];
+                let ink = if c.heat {
+                    let (back, ink) = th.heat_cell(cell.heat.min(5), tint);
                     s.cv.fill(x, clip_top, w, clip_bottom - clip_top, back);
                     let edge = th.color_for(0x484848, 0x484848, th.divider);
                     s.cv.vline(x, clip_top, clip_bottom - clip_top, mix(back, edge, 0.4));
-                }
-                if overlay > 0.0 {
-                    s.cv.blend(x, clip_top, w, clip_bottom - clip_top, th.overlay, overlay);
-                }
+                    ink
+                } else {
+                    if overlay > 0.0 {
+                        s.cv.blend(x, clip_top, w, clip_bottom - clip_top, th.overlay, overlay);
+                    }
+                    th.text
+                };
                 let mut text_x = x + pad;
                 if i == 0 {
                     let indent = match (has_tree, child) {
@@ -451,7 +452,7 @@ impl Table {
                     text_x = ix + icon_size + s.px(6.0);
                 }
                 let align = if c.right { DT_R } else { DT_L };
-                s.cv.text(f.body, &cell.text, (text_x, y, x + w - pad - text_x, rh), th.text, align);
+                s.cv.text(f.body, &cell.text, (text_x, y, x + w - pad - text_x, rh), ink, align);
                 x += w;
             }
             let visible = Area { x: area.x, y: clip_top, w: area.w - s.px(12.0), h: clip_bottom - clip_top };

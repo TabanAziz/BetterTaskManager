@@ -19,7 +19,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW;
 pub const WM_APP_LIST: u32 = 0x8000 + 4;
 
 pub enum Data {
-    History(Result<Vec<history::AppUsage>, String>),
+    History(history::History),
     Startup(Vec<startup::Entry>),
     Users(Vec<users::Session>),
     Services(Result<Vec<services::Service>, String>),
@@ -45,19 +45,26 @@ pub fn request(feed: Feed, notify: HWND) {
     let window = notify as isize;
     let spawned = std::thread::Builder::new().name("page data".into()).spawn(move || {
         let data = match feed {
-            Feed::History => Data::History(history::load()),
+            Feed::History => Data::History(history::load(|apps| {
+                enqueue(Data::History(history::History::Loading(apps)));
+                unsafe { PostMessageW(window as HWND, WM_APP_LIST, 0, 0) };
+            })),
             Feed::Startup => Data::Startup(startup::load()),
             Feed::Users => Data::Users(users::load()),
             Feed::Services => Data::Services(services::load()),
         };
-        if let Ok(mut ready) = READY.lock() {
-            ready.push(data);
-        }
+        enqueue(data);
         BUSY[feed as usize].store(false, Ordering::Release);
         unsafe { PostMessageW(window as HWND, WM_APP_LIST, 0, 0) };
     });
     if spawned.is_err() {
         busy.store(false, Ordering::Release);
+    }
+}
+
+fn enqueue(data: Data) {
+    if let Ok(mut ready) = READY.lock() {
+        ready.push(data);
     }
 }
 
@@ -83,7 +90,9 @@ mod live {
     #[ignore]
     fn live_feeds() {
         let t = Instant::now();
-        let apps = history::load().expect("history");
+        let (history::History::Complete(apps) | history::History::Incomplete(apps)) = history::load(|_| {}) else {
+            panic!("Windows history unavailable");
+        };
         let total: u64 = apps.iter().map(|a| a.received + a.sent).sum();
         let named = apps.iter().filter(|a| !a.name.is_empty()).count();
         println!("history: {} apps, {named} named, {} MB, {:?}", apps.len(), total >> 20, t.elapsed());

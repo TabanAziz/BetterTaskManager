@@ -4,9 +4,10 @@
 //! explorer.exe: their handlers are per-user registry entries that any program of the
 //! user can change, and must not inherit administrator rights.
 
-use std::sync::OnceLock;
+use std::{path::Path, process::Command, sync::OnceLock};
 
 use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::System::Registry::HKEY_CURRENT_USER;
 use windows_sys::Win32::System::SystemInformation::{GetSystemDirectoryW, GetSystemWindowsDirectoryW};
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -15,7 +16,7 @@ use crate::util::{from_wide, wide};
 
 pub fn elevated() -> bool {
     static ELEVATED: OnceLock<bool> = OnceLock::new();
-    *ELEVATED.get_or_init(crate::sampler::is_elevated)
+    *ELEVATED.get_or_init(|| crate::sampler::token_elevation().unwrap_or(true))
 }
 
 /// Not %SystemRoot%: the user controls the environment of an elevated process.
@@ -46,6 +47,25 @@ pub fn open(owner: HWND, target: &str) {
 }
 
 pub fn show_in_folder(owner: HWND, path: &str) {
+    if !elevated()
+        && Path::new(path).is_absolute()
+        && crate::sysinfo::reg_string(HKEY_CURRENT_USER, r"Software\Classes\Directory\shell", "").as_deref()
+            == Some("BetterExplorer.Open")
+    {
+        if let Some(exe) = crate::sysinfo::reg_string(
+            HKEY_CURRENT_USER,
+            r"Software\Classes\Directory\shell\BetterExplorer.Open",
+            "BetterExplorerExecutable",
+        ) {
+            let exe = Path::new(&exe);
+            if exe.is_absolute()
+                && exe.file_name().is_some_and(|name| name.eq_ignore_ascii_case("BetterExplorer.exe"))
+                && Command::new(exe).args(["--select", path]).spawn().is_ok()
+            {
+                return;
+            }
+        }
+    }
     execute(owner, &explorer(), &format!("/select,\"{path}\""));
 }
 

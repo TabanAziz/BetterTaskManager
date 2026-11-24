@@ -81,6 +81,24 @@ struct CustomPalette {
 
 const FALLBACK_ACCENT: [Color; 8] = [0x99EBFF, 0x4CC2FF, 0x0091F8, 0x0078D4, 0x0067C0, 0x003E92, 0x001A68, 0xF7630C];
 
+#[derive(Clone, Copy)]
+pub(super) enum RowTint {
+    Normal,
+    Hover,
+    Selected,
+}
+
+impl RowTint {
+    pub(super) fn strength(self, dark: bool) -> f32 {
+        match self {
+            Self::Normal => 0.0,
+            Self::Hover => 0.05,
+            Self::Selected if dark => 0.10,
+            Self::Selected => 0.08,
+        }
+    }
+}
+
 pub struct Theme {
     pub dark: bool,
     pub custom: Option<ThemePreference>,
@@ -91,7 +109,7 @@ pub struct Theme {
     pub text2: Color,
     pub text3: Color,
     pub divider: Color,
-    pub heat: [Color; 6],
+    heat: [[(Color, Color); 3]; 6],
     pub header_hot: Color,
     pub accent: Color,
     pub accent_strong: Color,
@@ -163,12 +181,31 @@ fn apps_use_light() -> bool {
 
 impl Theme {
     pub fn load(preference: ThemePreference) -> Self {
-        let palette = match preference {
-            ThemePreference::System => return Self::load_variant(apps_use_light()),
-            ThemePreference::Light => return Self::load_variant(true),
-            ThemePreference::Dark => return Self::load_variant(false),
-            custom => custom_palette(custom),
-        };
+        match preference {
+            ThemePreference::System => Self::standard(apps_use_light(), Self::windows_accent()),
+            ThemePreference::Light => Self::standard(true, Self::windows_accent()),
+            ThemePreference::Dark => Self::standard(false, Self::windows_accent()),
+            custom => Self::custom(custom),
+        }
+    }
+
+    pub(super) fn previews() -> [Self; ThemePreference::ALL.len()] {
+        let light = apps_use_light();
+        let accent = Self::windows_accent();
+        ThemePreference::ALL.map(|preference| match preference {
+            ThemePreference::System => Self::standard(light, accent),
+            ThemePreference::Light => Self::standard(true, accent),
+            ThemePreference::Dark => Self::standard(false, accent),
+            custom => Self::custom(custom),
+        })
+    }
+
+    fn windows_accent() -> [Color; 8] {
+        accent_palette().unwrap_or(FALLBACK_ACCENT)
+    }
+
+    fn custom(preference: ThemePreference) -> Self {
+        let palette = custom_palette(preference);
         let mut theme = Self::standard(!palette.dark, FALLBACK_ACCENT);
         theme.custom = Some(preference);
         theme.title_bg = palette.title;
@@ -178,9 +215,6 @@ impl Theme {
         theme.text2 = palette.muted;
         theme.text3 = palette.muted;
         theme.divider = palette.edge;
-        let max_heat = if palette.dark { 0.35 } else { 0.24 };
-        theme.heat =
-            [0.10, 0.23, 0.38, 0.56, 0.77, 1.0].map(|level| mix(palette.content, palette.accent, level * max_heat));
         theme.header_hot = palette.active;
         theme.accent = palette.accent;
         theme.accent_strong = mix(palette.accent, palette.text, 0.14);
@@ -195,11 +229,24 @@ impl Theme {
         theme.search_focus = mix(palette.field, palette.accent, 0.10);
         theme.search_border = palette.edge;
         theme.search_hint = palette.muted;
+        theme.make_heat_palette();
         theme
     }
 
-    fn load_variant(light: bool) -> Self {
-        Self::standard(light, accent_palette().unwrap_or(FALLBACK_ACCENT))
+    fn make_heat_palette(&mut self) {
+        // Keep low values close to the table surface and give the upper levels room to stand out.
+        let source = if self.accent == self.content { self.text } else { self.accent };
+        self.heat = [0.08, 0.19, 0.32, 0.46, 0.61, 0.78].map(|strength| {
+            let base = mix(self.content, source, strength);
+            [RowTint::Normal, RowTint::Hover, RowTint::Selected].map(|state| {
+                let bg = mix(base, self.overlay, state.strength(self.dark));
+                (bg, readable_text(bg, self.text))
+            })
+        });
+    }
+
+    pub(super) fn heat_cell(&self, level: usize, state: RowTint) -> (Color, Color) {
+        self.heat[level][state as usize]
     }
 
     pub fn use_mica(&self) -> bool {
@@ -217,11 +264,15 @@ impl Theme {
     }
 
     pub fn accent_text(&self) -> Color {
-        if self.custom.is_some() && !self.dark {
-            0xFFFFFF
-        } else {
-            0x000000
-        }
+        self.accent_text_on(self.accent)
+    }
+
+    pub fn accent_text_on(&self, background: Color) -> Color {
+        readable_text(background, if self.dark { 0x000000 } else { 0xFFFFFF })
+    }
+
+    pub(super) fn readable_text_on(&self, background: Color) -> Color {
+        readable_text(background, self.text)
     }
 
     pub fn control_bg(&self, hover: bool) -> Color {
@@ -233,9 +284,8 @@ impl Theme {
     }
 
     fn standard(light: bool, pal: [Color; 8]) -> Self {
-        if !light {
+        let mut theme = if !light {
             let content = 0x191919;
-            let base = pal[5];
             Theme {
                 dark: true,
                 custom: None,
@@ -246,7 +296,7 @@ impl Theme {
                 text2: 0xC8C8C8,
                 text3: 0x9A9A9A,
                 divider: 0x2D2D2D,
-                heat: [mix(content, base, 0.30), mix(content, base, 0.70), base, pal[4], pal[3], pal[2]],
+                heat: [[(0, 0); 3]; 6],
                 header_hot: 0x272727,
                 accent: pal[1],
                 accent_strong: pal[2],
@@ -270,7 +320,6 @@ impl Theme {
             }
         } else {
             let content = 0xF9F9F9;
-            let base = pal[0];
             Theme {
                 dark: false,
                 custom: None,
@@ -279,16 +328,9 @@ impl Theme {
                 content,
                 text: 0x1A1A1A,
                 text2: 0x5C5C5C,
-                text3: 0x8A8A8A,
+                text3: 0x6B6B6B,
                 divider: 0xE5E5E5,
-                heat: [
-                    mix(content, base, 0.25),
-                    mix(content, base, 0.55),
-                    base,
-                    pal[1],
-                    mix(pal[1], pal[2], 0.5),
-                    pal[2],
-                ],
+                heat: [[(0, 0); 3]; 6],
                 header_hot: 0xEDEDED,
                 accent: pal[4],
                 accent_strong: pal[3],
@@ -310,7 +352,36 @@ impl Theme {
                 search_border: 0xE0E0E0,
                 search_hint: 0x5F5F5F,
             }
+        };
+        theme.make_heat_palette();
+        theme
+    }
+}
+
+fn luminance(color: Color) -> f32 {
+    let linear = |shift: u32| {
+        let channel = ((color >> shift) & 0xFF) as f32 / 255.0;
+        if channel <= 0.04045 {
+            channel / 12.92
+        } else {
+            ((channel + 0.055) / 1.055).powf(2.4)
         }
+    };
+    0.2126 * linear(16) + 0.7152 * linear(8) + 0.0722 * linear(0)
+}
+
+fn contrast(a: f32, b: f32) -> f32 {
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+fn readable_text(background: Color, preferred: Color) -> Color {
+    let bg = luminance(background);
+    if contrast(bg, luminance(preferred)) >= 4.5 {
+        preferred
+    } else if contrast(bg, 0.0) >= contrast(bg, 1.0) {
+        0x000000
+    } else {
+        0xFFFFFF
     }
 }
 
@@ -404,6 +475,44 @@ fn custom_palette(preference: ThemePreference) -> CustomPalette {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accent_button_text_stays_readable_for_the_default_windows_accent() {
+        let theme = Theme::standard(true, FALLBACK_ACCENT);
+        assert_eq!(theme.accent_text(), 0xFFFFFF);
+    }
+
+    #[test]
+    fn heat_levels_and_chrome_text_remain_distinct_in_every_theme() {
+        for (preference, theme) in ThemePreference::ALL.into_iter().zip(Theme::previews()) {
+            for bg in [theme.nav_bg, theme.chrome_hover, theme.chrome_sel, theme.title_bg] {
+                assert!(contrast(luminance(bg), luminance(theme.chrome_fg)) >= 4.5, "{preference:?}: chrome");
+            }
+            for (bg, ink) in [
+                (theme.header_hot, theme.text2),
+                (theme.control_bg(true), theme.text2),
+                (theme.content, theme.text3),
+                (theme.search_focus, theme.search_hint),
+                (theme.accent, theme.accent_text()),
+                (theme.accent_strong, theme.accent_text_on(theme.accent_strong)),
+            ] {
+                assert!(contrast(luminance(bg), luminance(ink)) >= 4.5, "{preference:?}: {bg:06X}/{ink:06X}");
+            }
+            for tint in [RowTint::Normal, RowTint::Hover, RowTint::Selected] {
+                let mut previous: Option<Color> = None;
+                for level in 0..6 {
+                    let (bg, fg) = theme.heat_cell(level, tint);
+                    assert!(contrast(luminance(bg), luminance(fg)) >= 4.5, "{preference:?}: heat level {level}");
+                    if let Some(previous) = previous {
+                        let distance: u32 =
+                            [0, 8, 16].into_iter().map(|s| ((bg >> s) & 255).abs_diff((previous >> s) & 255)).sum();
+                        assert!(distance >= 12, "{preference:?}: adjacent heat levels {level}");
+                    }
+                    previous = Some(bg);
+                }
+            }
+        }
+    }
 
     #[test]
     fn saved_theme_names_round_trip_and_fall_back_to_system() {

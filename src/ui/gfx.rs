@@ -41,6 +41,7 @@ pub struct Canvas {
     pub px: *mut u32,
     pub w: i32,
     pub h: i32,
+    pixel_clip: (i32, i32, i32, i32),
 }
 
 impl Canvas {
@@ -49,7 +50,15 @@ impl Canvas {
         unsafe {
             SetBkMode(hdc, TRANSPARENT as i32);
         }
-        Canvas { hdc, bmp: std::ptr::null_mut(), old: std::ptr::null_mut(), px: std::ptr::null_mut(), w: 0, h: 0 }
+        Canvas {
+            hdc,
+            bmp: std::ptr::null_mut(),
+            old: std::ptr::null_mut(),
+            px: std::ptr::null_mut(),
+            w: 0,
+            h: 0,
+            pixel_clip: (0, 0, 0, 0),
+        }
     }
 
     pub fn ensure(&mut self, w: i32, h: i32) {
@@ -77,6 +86,7 @@ impl Canvas {
         }
         self.w = w;
         self.h = h;
+        self.clip_pixels(None);
     }
 
     #[inline]
@@ -86,10 +96,11 @@ impl Canvas {
 
     #[inline]
     fn clip(&self, x: i32, y: i32, w: i32, h: i32) -> Option<(i32, i32, i32, i32)> {
-        let x0 = x.max(0);
-        let y0 = y.max(0);
-        let x1 = (x + w).min(self.w);
-        let y1 = (y + h).min(self.h);
+        let (left, top, right, bottom) = self.pixel_clip;
+        let x0 = x.max(left);
+        let y0 = y.max(top);
+        let x1 = (x + w).min(right);
+        let y1 = (y + h).min(bottom);
         if x1 <= x0 || y1 <= y0 {
             None
         } else {
@@ -182,6 +193,7 @@ impl Canvas {
         let y0 = y.floor() as i32;
         let x1 = (x + w).ceil() as i32;
         let y1 = (y + h).ceil() as i32;
+        let Some((left, top, right, bottom)) = self.clip(x0, y0, x1 - x0, y1 - y0) else { return };
         let band = r.ceil() as i32 + 1;
         let (hx, hy) = (x + w / 2.0, y + h / 2.0);
         let cov = |xx: i32, yy: i32| -> f32 {
@@ -194,9 +206,9 @@ impl Canvas {
             let d = (ox * ox + oy * oy).sqrt() + cx.max(cy).min(0.0) - r;
             (0.5 - d).clamp(0.0, 1.0)
         };
-        for yy in y0.max(0)..y1.min(self.h) {
+        for yy in top..bottom {
             if yy < y0 + band || yy >= y1 - band {
-                for xx in x0.max(0)..x1.min(self.w) {
+                for xx in left..right {
                     let k = cov(xx, yy);
                     if k > 0.0 {
                         self.blend_px(xx, yy, c, k * a);
@@ -205,14 +217,14 @@ impl Canvas {
             } else {
                 let l1 = (x0 + band).min(x1);
                 let r0 = (x1 - band).max(l1);
-                for xx in x0.max(0)..l1.min(self.w) {
+                for xx in left..l1.min(right) {
                     let k = cov(xx, yy);
                     if k > 0.0 {
                         self.blend_px(xx, yy, c, k * a);
                     }
                 }
-                self.run(yy, l1, r0, c, a);
-                for xx in r0.max(0)..x1.min(self.w) {
+                self.run(yy, l1.max(left), r0.min(right), c, a);
+                for xx in r0.max(left)..right {
                     let k = cov(xx, yy);
                     if k > 0.0 {
                         self.blend_px(xx, yy, c, k * a);
@@ -231,6 +243,7 @@ impl Canvas {
         let y0 = y.floor() as i32 - 1;
         let x1 = (x + w).ceil() as i32 + 1;
         let y1 = (y + h).ceil() as i32 + 1;
+        let Some((left, top, right, bottom)) = self.clip(x0, y0, x1 - x0, y1 - y0) else { return };
         let band = r.ceil() as i32 + 2;
         let (hx, hy) = (x + w / 2.0, y + h / 2.0);
         let cov = |xx: i32, yy: i32| -> f32 {
@@ -243,11 +256,10 @@ impl Canvas {
             let d = (ox * ox + oy * oy).sqrt() + cx.max(cy).min(0.0) - r;
             (1.0 - (d + 0.5).abs()).clamp(0.0, 1.0)
         };
-        for yy in y0.max(0)..y1.min(self.h) {
+        for yy in top..bottom {
             let full = yy < y0 + band || yy >= y1 - band;
-            let mut xx = x0.max(0);
-            let end = x1.min(self.w);
-            while xx < end {
+            let mut xx = left;
+            while xx < right {
                 if !full && xx >= x0 + band && xx < x1 - band {
                     xx = x1 - band;
                     continue;
@@ -370,6 +382,14 @@ impl Canvas {
                 }
             }
         }
+    }
+
+    /// Clip fills and rounded shapes written directly into the DIB.
+    pub(super) fn clip_pixels(&mut self, bounds: Option<RECT>) {
+        let (left, top, right, bottom) = bounds
+            .map(|r| (r.left.max(0), r.top.max(0), r.right.min(self.w), r.bottom.min(self.h)))
+            .unwrap_or((0, 0, self.w, self.h));
+        self.pixel_clip = (left, top, right, bottom);
     }
 }
 

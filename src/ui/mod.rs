@@ -82,6 +82,8 @@ pub enum Hit {
     PerfItem(usize),
     PerfGraph,
     Setting(u32),
+    Theme(ThemePreference),
+    SettingsScroll,
     List(table::Part),
     InfoSetup,
     InfoClose,
@@ -218,6 +220,7 @@ pub struct App {
     pub lists: lists::Lists,
     pub nav_peek: bool,
     pub settings: Settings,
+    settings_page: settings::PageState,
     pub drag: Option<Drag>,
     pub busy_note: Option<(String, u64)>,
     pub registered: bool,
@@ -229,6 +232,7 @@ pub struct App {
 pub enum Drag {
     Column { page: Page, col: usize, start_x: i32, start_w: i32 },
     Scroll { page: Page, start_y: i32, start_scroll: f32 },
+    SettingsScroll { start_y: i32, start_scroll: i32, scroll_range: i32, thumb_range: i32 },
     List(table::Drag),
 }
 
@@ -293,6 +297,7 @@ impl App {
     }
 
     fn refresh_theme(&mut self) {
+        self.settings_page.invalidate_gallery();
         self.th = Theme::load(self.settings.theme);
         unsafe { apply_frame(self.hwnd, &self.th) };
         enable_dark_menus(self.hwnd, self.settings.theme, self.th.dark);
@@ -346,7 +351,8 @@ impl App {
         if mica {
             self.cv.premultiply_from_black(0, 0, w, th);
             self.cv.premultiply_from_black(0, th, nw, h - th);
-        } else if self.th.custom.is_some() {
+        } else {
+            // GDI clears alpha on the pixels it draws. Keep the opaque chrome and its glyphs opaque.
             self.cv.set_alpha_opaque(0, 0, w, th);
             self.cv.set_alpha_opaque(0, th, nw, h - th);
         }
@@ -445,12 +451,15 @@ impl App {
         if self.search.is_empty() {
             self.cv.text(fb, "Type a name, publisher, or PID to search", (tx, y, tw, sh), shint, DT_L);
         } else {
-            if self.search_all_selected && focus {
+            let search_text = if self.search_all_selected && focus {
                 let tw2 = self.cv.text_width(fb, &self.search).min(tw);
                 let selection = self.th.color_for(0x2A5A8A, 0x2A5A8A, self.th.chrome_sel);
                 self.cv.fill(tx, y + self.px(7.0), tw2, sh - self.px(14.0), selection);
-            }
-            self.cv.text(fb, &self.search.clone(), (tx, y, tw, sh), fg, DT_L);
+                self.th.readable_text_on(selection)
+            } else {
+                fg
+            };
+            self.cv.text(fb, &self.search, (tx, y, tw, sh), search_text, DT_L);
             // Clear button.
             let cx = x + sw - self.px(32.0);
             let hc = self.hover == Hit::SearchClear;
@@ -666,6 +675,9 @@ impl App {
                     procs::drag_scroll(self, page, start_y, start_scroll, y);
                     self.invalidate();
                 }
+                Drag::SettingsScroll { start_y, start_scroll, scroll_range, thumb_range } => {
+                    self.settings_scroll_to(start_scroll + (y - start_y) * scroll_range / thumb_range);
+                }
                 Drag::List(drag) => {
                     let (page, scale) = (self.page, self.s);
                     if let Some(table) = self.lists.table(page) {
@@ -726,6 +738,12 @@ impl App {
                 self.drag = Some(Drag::Scroll { page, start_y: y, start_scroll: g.scroll });
                 unsafe { SetCapture(self.hwnd) };
             }
+            Hit::SettingsScroll => {
+                self.drag = self.settings_scroll_press(y);
+                if self.drag.is_some() {
+                    unsafe { SetCapture(self.hwnd) };
+                }
+            }
             Hit::Row(page, i) => {
                 procs::select_row(self, page, i);
                 if dbl {
@@ -774,6 +792,7 @@ impl App {
             Hit::Hdr(page, col) => procs::header_click(self, page, col),
             Hit::Tool(t) => self.on_tool(t),
             Hit::Setting(id) => settings::click(self, id),
+            Hit::Theme(theme) => settings::choose_theme(self, theme),
             Hit::InfoSetup => settings::setup_helper(self),
             Hit::InfoClose => {
                 self.settings.hint_dismissed = true;
@@ -822,6 +841,7 @@ impl App {
                 self.hover = self.hit_at(x, y);
                 self.invalidate();
             }
+            Page::Settings => self.settings_wheel(delta),
             page => {
                 if let Some(table) = self.lists.table(page) {
                     table.wheel(delta);
@@ -946,6 +966,7 @@ impl App {
         match self.page {
             Page::Procs | Page::Details => procs::on_key(self, vk),
             Page::Perf => perf::on_key(self, vk),
+            Page::Settings => self.settings_key(vk),
             _ => lists::on_key(self, vk),
         }
     }
@@ -1185,6 +1206,7 @@ pub(super) unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, l
                 lists: lists::Lists::new(),
                 nav_peek: false,
                 settings,
+                settings_page: settings::PageState::default(),
                 drag: None,
                 busy_note: None,
                 registered: !demo && crate::shell_hook::state().is_ours(),
@@ -1250,6 +1272,7 @@ pub(super) unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, l
                 let dpi = (wp & 0xFFFF) as u32;
                 a.dpi = dpi;
                 a.s = dpi as f32 / 96.0;
+                a.settings_page.invalidate_gallery();
                 a.f.destroy();
                 a.f = Fonts::new(a.s);
                 meta::set_icon_size((16.0 * a.s).round() as i32);
@@ -1274,10 +1297,11 @@ pub(super) unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, l
         }
         WM_DWMCOLORIZATIONCOLORCHANGED => {
             if let Some(a) = app_opt() {
+                a.settings_page.invalidate_gallery();
                 if a.th.use_mica() {
                     a.th = Theme::load(a.settings.theme);
-                    a.invalidate();
                 }
+                a.invalidate();
             }
         }
         WM_ACTIVATE => {

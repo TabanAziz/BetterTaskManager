@@ -254,7 +254,7 @@ fn pages() -> Vec<Data> {
     };
     use startup::Impact::*;
     vec![
-        Data::History(Ok(vec![
+        Data::History(history::History::Complete(vec![
             usage("Microsoft Edge", 48_200, 3_100),
             usage("Chat", 6_400, 2_800),
             usage("Music Player", 4_100, 120),
