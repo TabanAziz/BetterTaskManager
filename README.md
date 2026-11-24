@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>The Task Manager Microsoft should have shipped.</b><br>
-  Everything you open Task Manager for, in a 1.1&nbsp;MB native Rust app that is ready in under a tenth of a second.
+  Everything you open Task Manager for, in a native Rust app for Windows 11.
 </p>
 
 <p align="center">
@@ -42,7 +42,7 @@ companies on the planet:
   enough for Windows to file it as an application hang (Event ID 1002,
   Taskmgr.exe 10.0.26100.9549). Who do you call when the thing that kills frozen
   programs is the frozen program?
-- **It is bloated.** `Taskmgr.exe` alone is 5.7 MB. All of BTM, every page, is 1.1 MB.
+- **It is bloated.** `Taskmgr.exe` alone is 5.7 MB. BTM 1.0 weighed 1.1 MB with every page included.
 
 A multi-trillion-dollar company owns the kernel, the scheduler, every private API
 and the source code, and still ships this. So here is one that respects your time.
@@ -78,8 +78,14 @@ Every page of the Windows 11 Task Manager:
 | **Details** | The flat process list with PID, user, CPU, private memory and more |
 | **Services** | Every service with start, stop and restart |
 
-Plus search on every list (Ctrl+F), sorting on every column, dark and light theme,
-your accent color, Mica, per-monitor DPI and an optional Ctrl+Shift+Esc takeover.
+Plus search on every list (Ctrl+F), sorting on every column, per-monitor DPI and
+an optional Ctrl+Shift+Esc takeover.
+
+Choose a theme in **Settings**. **System** follows Windows with your accent color
+and Mica. **Light** and **Dark** let you choose a Windows appearance for BTM.
+**Deep Space**, **Paper White**, **Candy Rush**, **Frost**, **Eclipse** and
+**Cyber Grid** use the same palettes and title bar motifs as BetterExplorer.
+BTM remembers the selection.
 
 | | |
 | --- | --- |
@@ -104,7 +110,7 @@ cost money). Compare the file with `SHA256SUMS.txt` from the release, then choos
 *More info > Run anyway*:
 
 ```powershell
-Get-FileHash .\BTM-Setup-1.0.0.exe
+Get-FileHash .\BTM-Setup-1.1.0.exe
 ```
 
 ### Portable

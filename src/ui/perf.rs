@@ -140,7 +140,9 @@ struct Info {
 
 impl App {
     fn series_fill(&self, c: Color) -> Color {
-        if self.th.dark {
+        if self.th.custom.is_some() {
+            mix(self.th.content, c, if self.th.dark { 0.27 } else { 0.14 })
+        } else if self.th.dark {
             scale_color(c, 0.27)
         } else {
             mix(0xFFFFFF, c, 0.14)
@@ -254,11 +256,10 @@ impl App {
             let (ix, iw) = (r.x + self.px(6.0), r.w - self.px(12.0));
             let selected = i == self.perf_sel;
             if selected || self.hover == Hit::PerfItem(i) {
-                let c = match (self.th.dark, selected) {
-                    (true, true) => 0x272727,
-                    (true, false) => 0x222222,
-                    (false, true) => 0xEAEAEA,
-                    (false, false) => 0xF0F0F0,
+                let c = if selected {
+                    self.th.color_for(0x272727, 0xEAEAEA, self.th.chrome_sel)
+                } else {
+                    self.th.color_for(0x222222, 0xF0F0F0, self.th.chrome_hover)
                 };
                 let radius = self.px(4.0) as f32;
                 self.cv.round_rect(ix as f32, iy as f32, iw as f32, item_h as f32, radius, c, 1.0);

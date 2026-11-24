@@ -424,7 +424,8 @@ impl Table {
                 if c.heat {
                     let back = th.heat[cell.heat.min(5)];
                     s.cv.fill(x, clip_top, w, clip_bottom - clip_top, back);
-                    s.cv.vline(x, clip_top, clip_bottom - clip_top, mix(back, 0x484848, 0.4));
+                    let edge = th.color_for(0x484848, 0x484848, th.divider);
+                    s.cv.vline(x, clip_top, clip_bottom - clip_top, mix(back, edge, 0.4));
                 }
                 if overlay > 0.0 {
                     s.cv.blend(x, clip_top, w, clip_bottom - clip_top, th.overlay, overlay);
@@ -474,7 +475,7 @@ impl Table {
         let hot = s.hover == Hit::List(Part::Scroll);
         let width = s.px(if hot { 6.0 } else { 2.0 });
         let x = (area.x + area.w - s.px(4.0) - width) as f32;
-        let color = if s.th.dark { 0x959595 } else { 0x8A8A8A };
+        let color = s.th.color_for(0x959595, 0x8A8A8A, s.th.text2);
         s.cv.round_rect(x, top, width as f32, size, width as f32 / 2.0, color, 1.0);
         let track = s.px(12.0);
         s.hit(Area { x: area.x + area.w - track, y: self.body.0, w: track, h: self.body.1 }, Part::Scroll);

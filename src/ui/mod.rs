@@ -12,17 +12,17 @@ mod procs;
 pub(crate) mod settings;
 mod table;
 pub mod testmode;
+mod theme;
+mod theme_visuals;
 pub(crate) mod window;
 
 pub(crate) use procs::{menu_item as procs_menu_item, popup as procs_popup};
 
 use std::collections::HashSet;
-use std::ffi::c_void;
 
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Dwm::*;
 use windows_sys::Win32::Graphics::Gdi::*;
-use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_BINARY, RRF_RT_REG_DWORD};
 use windows_sys::Win32::UI::Controls::{MARGINS, WM_MOUSELEAVE};
 use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
@@ -33,6 +33,7 @@ use crate::model::Snapshot;
 use crate::sampler;
 use crate::util::wide;
 use gfx::*;
+use theme::{Theme, ThemePreference};
 
 pub const WM_APP_DONE: u32 = 0x8000 + 3;
 const TIMER_CARET: usize = 7;
@@ -84,166 +85,6 @@ pub enum Hit {
     List(table::Part),
     InfoSetup,
     InfoClose,
-}
-
-pub struct Theme {
-    pub dark: bool,
-    pub content: Color,
-    pub text: Color,
-    pub text2: Color,
-    pub text3: Color,
-    pub divider: Color,
-    pub heat: [Color; 6],
-    pub header_hot: Color,
-    pub accent: Color,
-    pub accent_strong: Color,
-    pub cpu: Color,
-    pub mem: Color,
-    pub disk: Color,
-    pub net: Color,
-    pub gpu: Color,
-    pub leaf: Color,
-    pub thumb_bg: Color,
-    pub thumb_border: Color,
-    pub overlay: Color,
-    /// Title bar / navigation (Mica area): foreground, hover and selection fills,
-    /// search box colours.
-    pub chrome_fg: Color,
-    pub chrome_hover: Color,
-    pub chrome_sel: Color,
-    pub search_bg: Color,
-    pub search_hover: Color,
-    pub search_focus: Color,
-    pub search_border: Color,
-    pub search_hint: Color,
-}
-
-fn accent_palette() -> Option<[Color; 8]> {
-    let k = wide("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent");
-    let v = wide("AccentPalette");
-    let mut buf = [0u8; 32];
-    let mut size = 32u32;
-    let st = unsafe {
-        RegGetValueW(
-            HKEY_CURRENT_USER,
-            k.as_ptr(),
-            v.as_ptr(),
-            RRF_RT_REG_BINARY,
-            std::ptr::null_mut(),
-            buf.as_mut_ptr() as *mut c_void,
-            &mut size,
-        )
-    };
-    if st != 0 || size < 32 {
-        return None;
-    }
-    let mut p = [0u32; 8];
-    for i in 0..8 {
-        p[i] = rgb(buf[i * 4], buf[i * 4 + 1], buf[i * 4 + 2]);
-    }
-    Some(p)
-}
-
-fn apps_use_light() -> bool {
-    let k = wide("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
-    let v = wide("AppsUseLightTheme");
-    let mut val = 0u32;
-    let mut size = 4u32;
-    let st = unsafe {
-        RegGetValueW(
-            HKEY_CURRENT_USER,
-            k.as_ptr(),
-            v.as_ptr(),
-            RRF_RT_REG_DWORD,
-            std::ptr::null_mut(),
-            &mut val as *mut _ as *mut c_void,
-            &mut size,
-        )
-    };
-    st == 0 && val != 0
-}
-
-impl Theme {
-    pub fn load() -> Theme {
-        Theme::load_variant(apps_use_light())
-    }
-
-    pub fn load_variant(light: bool) -> Theme {
-        let pal = accent_palette()
-            .unwrap_or([0x99EBFF, 0x4CC2FF, 0x0091F8, 0x0078D4, 0x0067C0, 0x003E92, 0x001A68, 0xF7630C]);
-        if !light {
-            let content = 0x191919;
-            let base = pal[5];
-            Theme {
-                dark: true,
-                content,
-                text: 0xFFFFFF,
-                text2: 0xC8C8C8,
-                text3: 0x9A9A9A,
-                divider: 0x2D2D2D,
-                heat: [mix(content, base, 0.30), mix(content, base, 0.70), base, pal[4], pal[3], pal[2]],
-                header_hot: 0x272727,
-                accent: pal[1],
-                accent_strong: pal[2],
-                cpu: 0x39B8E3,
-                mem: 0x5C9EFA,
-                disk: 0x84C718,
-                net: 0xF5628E,
-                gpu: 0xDE68F2,
-                leaf: 0x6CCB5F,
-                thumb_bg: 0x292929,
-                thumb_border: 0x757575,
-                overlay: 0xFFFFFF,
-                chrome_fg: 0xFFFFFF,
-                chrome_hover: 0x0B0B0B,
-                chrome_sel: 0x101010,
-                search_bg: 0x323232,
-                search_hover: 0x3A3A3A,
-                search_focus: 0x1F1F1F,
-                search_border: 0x444444,
-                search_hint: 0xA8A8A8,
-            }
-        } else {
-            let content = 0xF9F9F9;
-            let base = pal[0];
-            Theme {
-                dark: false,
-                content,
-                text: 0x1A1A1A,
-                text2: 0x5C5C5C,
-                text3: 0x8A8A8A,
-                divider: 0xE5E5E5,
-                heat: [
-                    mix(content, base, 0.25),
-                    mix(content, base, 0.55),
-                    base,
-                    pal[1],
-                    mix(pal[1], pal[2], 0.5),
-                    pal[2],
-                ],
-                header_hot: 0xEDEDED,
-                accent: pal[4],
-                accent_strong: pal[3],
-                cpu: 0x117DBB,
-                mem: 0x8B12AE,
-                disk: 0x4DA60C,
-                net: 0xA74F01,
-                gpu: 0x9528B4,
-                leaf: 0x0F7B0F,
-                thumb_bg: 0xFFFFFF,
-                thumb_border: 0xBDBDBD,
-                overlay: 0x000000,
-                chrome_fg: 0x1A1A1A,
-                chrome_hover: 0xE9E9E9,
-                chrome_sel: 0xE5E5E5,
-                search_bg: 0xFBFBFB,
-                search_hover: 0xF6F6F6,
-                search_focus: 0xFFFFFF,
-                search_border: 0xE0E0E0,
-                search_hint: 0x5F5F5F,
-            }
-        }
-    }
 }
 
 pub struct Fonts {
@@ -343,6 +184,7 @@ pub const G_CLOSE: &str = "\u{E711}";
 pub const G_SHIELD: &str = "\u{EA18}";
 
 pub struct Settings {
+    pub theme: ThemePreference,
     pub start_page: Page,
     pub interval_ms: u32,
     pub topmost: bool,
@@ -450,6 +292,20 @@ impl App {
         unsafe { InvalidateRect(self.hwnd, std::ptr::null(), 0) };
     }
 
+    fn refresh_theme(&mut self) {
+        self.th = Theme::load(self.settings.theme);
+        unsafe { apply_frame(self.hwnd, &self.th) };
+        enable_dark_menus(self.hwnd, self.settings.theme, self.th.dark);
+        self.invalidate();
+    }
+
+    fn set_theme(&mut self, theme: ThemePreference) {
+        if self.settings.theme != theme {
+            self.settings.theme = theme;
+            self.refresh_theme();
+        }
+    }
+
     fn hit_at(&self, x: i32, y: i32) -> Hit {
         for (r, h) in self.hits.iter().rev() {
             if x >= r.left && x < r.right && y >= r.top && y < r.bottom {
@@ -473,21 +329,26 @@ impl App {
         let (w, h) = self.client();
         self.cv.ensure(w, h);
         self.hits.clear();
-        // Everything outside the content panel is Mica: draw light content on black,
-        // then convert to premultiplied alpha.
-        let dark = self.th.dark;
-        if dark {
+        let mica = self.th.dark && self.th.use_mica();
+        let th = self.title_h();
+        let nw = self.nav_w();
+        if mica {
+            // Draw dark Windows chrome over black, then premultiply it for Mica.
             self.cv.fill_raw(0, 0, w, h, 0);
         } else {
-            self.cv.fill(0, 0, w, h, 0xF3F3F3);
+            self.cv.fill(0, 0, w, h, self.th.nav_bg);
+            if self.th.custom.is_some() {
+                self.cv.fill(0, 0, w, th, self.th.title_bg);
+            }
         }
         self.draw_titlebar(w);
         self.draw_nav(h);
-        let th = self.title_h();
-        let nw = self.nav_w();
-        if dark {
+        if mica {
             self.cv.premultiply_from_black(0, 0, w, th);
             self.cv.premultiply_from_black(0, th, nw, h - th);
+        } else if self.th.custom.is_some() {
+            self.cv.set_alpha_opaque(0, 0, w, th);
+            self.cv.set_alpha_opaque(0, th, nw, h - th);
         }
         let q1 = crate::util::qpc_now();
 
@@ -501,7 +362,7 @@ impl App {
         self.cv.round_rect(px as f32, py as f32, (pw + r * 2) as f32, (ph + r * 2) as f32, r as f32, content, 1.0);
         self.cv.fill(px + r, py, pw - r, ph, content);
         self.cv.fill(px, py + r, pw, ph - r, content);
-        let border = if self.th.dark { 0x2B2B2B } else { 0xE5E5E5 };
+        let border = self.th.color_for(0x2B2B2B, 0xE5E5E5, self.th.divider);
         self.cv.round_rect_outline(
             px as f32,
             py as f32,
@@ -544,6 +405,12 @@ impl App {
         self.cv.text(fc, crate::product::NAME, (self.px(48.0), 0, self.px(178.0), self.px(56.0)), fg, DT_L);
         // Search box.
         let (x, y, sw, sh) = self.search_rect();
+        theme_visuals::paint_motif(
+            self.cv.hdc,
+            RECT { left: x + sw + self.px(12.0), top: 0, right: w - self.px(152.0), bottom: self.title_h() },
+            &self.th,
+            s,
+        );
         let focus = self.search_focus;
         let hover = self.hover == Hit::Search;
         let bg = if focus {
@@ -580,7 +447,8 @@ impl App {
         } else {
             if self.search_all_selected && focus {
                 let tw2 = self.cv.text_width(fb, &self.search).min(tw);
-                self.cv.fill(tx, y + self.px(7.0), tw2, sh - self.px(14.0), 0x2A5A8A);
+                let selection = self.th.color_for(0x2A5A8A, 0x2A5A8A, self.th.chrome_sel);
+                self.cv.fill(tx, y + self.px(7.0), tw2, sh - self.px(14.0), selection);
             }
             self.cv.text(fb, &self.search.clone(), (tx, y, tw, sh), fg, DT_L);
             // Clear button.
@@ -607,7 +475,6 @@ impl App {
             self.cv.fill(cx, y + self.px(8.0), self.px(1.0).max(1), sh - self.px(16.0), fg);
         }
         self.hits.insert(0, (RECT { left: x, top: y, right: x + sw, bottom: y + sh }, Hit::Search));
-        let _ = w;
     }
 
     fn draw_nav(&mut self, h: i32) {
@@ -701,7 +568,7 @@ impl App {
         let x = right - w;
         let hov = self.hover == Hit::Tool(tool) && enabled;
         if hov {
-            let c = if self.th.dark { 0x2D2D2D } else { 0xEAEAEA };
+            let c = self.th.color_for(0x2D2D2D, 0xEAEAEA, self.th.header_hot);
             self.cv.round_rect(x as f32, y as f32, w as f32, h as f32, self.px(4.0) as f32, c, 1.0);
         }
         let col = if enabled { self.th.text } else { self.th.text3 };
@@ -1165,22 +1032,31 @@ pub fn set_clipboard_text(hwnd: HWND, s: &str) {
 
 // ---------------------------------------------------------------------- dark menus
 
-fn enable_dark_menus(hwnd: HWND) {
+fn enable_dark_menus(hwnd: HWND, preference: ThemePreference, dark: bool) {
     // uxtheme ordinals 135 (SetPreferredAppMode), 133 (AllowDarkModeForWindow), 136 (FlushMenuThemes).
     unsafe {
         let lib = wide("uxtheme.dll");
-        let m = windows_sys::Win32::System::LibraryLoader::LoadLibraryW(lib.as_ptr());
+        use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, LoadLibraryW};
+        let mut m = GetModuleHandleW(lib.as_ptr());
+        if m.is_null() {
+            m = LoadLibraryW(lib.as_ptr());
+        }
         if m.is_null() {
             return;
         }
         let gp = |o: usize| windows_sys::Win32::System::LibraryLoader::GetProcAddress(m, o as *const u8);
         if let Some(f) = gp(135) {
             let f: unsafe extern "system" fn(i32) -> i32 = std::mem::transmute(f);
-            f(1); // AllowDark: follow the system setting
+            let mode = match preference {
+                ThemePreference::System => 1, // AllowDark
+                _ if dark => 2,               // ForceDark
+                _ => 3,                       // ForceLight
+            };
+            f(mode);
         }
         if let Some(f) = gp(133) {
             let f: unsafe extern "system" fn(HWND, i32) -> i32 = std::mem::transmute(f);
-            f(hwnd, 1);
+            f(hwnd, (preference == ThemePreference::System || dark) as i32);
         }
         if let Some(f) = gp(136) {
             let f: unsafe extern "system" fn() = std::mem::transmute(f);
@@ -1198,11 +1074,17 @@ fn frame_metrics(dpi: u32) -> (i32, i32) {
     }
 }
 
-unsafe fn apply_frame(hwnd: HWND, dark: bool) {
-    let on: i32 = if dark { 1 } else { 0 };
-    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE as u32, &on as *const _ as *const c_void, 4);
-    let backdrop: i32 = 2; // DWMSBT_MAINWINDOW (Mica)
-    DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE as u32, &backdrop as *const _ as *const c_void, 4);
+unsafe fn apply_frame(hwnd: HWND, theme: &Theme) {
+    let set = |attribute: DWMWINDOWATTRIBUTE, value: u32| {
+        DwmSetWindowAttribute(hwnd, attribute as u32, (&value as *const u32).cast(), 4);
+    };
+    let mica = theme.use_mica();
+    set(DWMWA_USE_IMMERSIVE_DARK_MODE, theme.dark as u32);
+    set(DWMWA_SYSTEMBACKDROP_TYPE, (if mica { DWMSBT_MAINWINDOW } else { DWMSBT_NONE }) as u32);
+    let window_color = |color| if mica { DWMWA_COLOR_DEFAULT } else { cr(color) };
+    set(DWMWA_CAPTION_COLOR, window_color(theme.title_bg));
+    set(DWMWA_TEXT_COLOR, window_color(theme.chrome_fg));
+    set(DWMWA_BORDER_COLOR, window_color(theme.divider));
     let m = MARGINS { cxLeftWidth: -1, cxRightWidth: -1, cyTopHeight: -1, cyBottomHeight: -1 };
     DwmExtendFrameIntoClientArea(hwnd, &m);
 }
@@ -1266,16 +1148,18 @@ pub(super) unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, l
         }
         WM_CREATE => {
             crate::util::trace("WM_CREATE");
+            let create = &*(lp as *const CREATESTRUCTW);
+            let demo = !create.lpCreateParams.is_null();
             let dpi = GetDpiForWindow(hwnd);
             let s = dpi as f32 / 96.0;
-            let th = Theme::load();
-            crate::util::trace("theme");
-            apply_frame(hwnd, th.dark);
-            crate::util::trace("apply_frame");
-            enable_dark_menus(hwnd);
-            crate::util::trace("dark_menus");
-            let settings = settings::load();
+            let settings = if demo { settings::defaults() } else { settings::load() };
             crate::util::trace("settings");
+            let th = Theme::load(settings.theme);
+            crate::util::trace("theme");
+            apply_frame(hwnd, &th);
+            crate::util::trace("apply_frame");
+            enable_dark_menus(hwnd, settings.theme, th.dark);
+            crate::util::trace("dark_menus");
             let fonts = Fonts::new(s);
             crate::util::trace("fonts");
             let mut a = Box::new(App {
@@ -1303,20 +1187,24 @@ pub(super) unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, l
                 settings,
                 drag: None,
                 busy_note: None,
-                registered: crate::shell_hook::state().is_ours(),
+                registered: !demo && crate::shell_hook::state().is_ours(),
                 last_mouse: (0, 0),
                 paint_stats: [0.0; 5],
             });
-            settings::apply_columns(&mut a);
+            if !demo {
+                settings::apply_columns(&mut a);
+            }
             crate::util::trace("app");
             APP = Box::into_raw(a);
             let a = app();
             meta::set_notify_window(hwnd);
             meta::set_icon_size((16.0 * s).round() as i32);
-            sampler::control().interval_ms.store(a.settings.interval_ms, std::sync::atomic::Ordering::Release);
-            sampler::start(hwnd);
-            crate::util::trace("sampler started");
-            lists::on_open(a);
+            if !demo {
+                sampler::control().interval_ms.store(a.settings.interval_ms, std::sync::atomic::Ordering::Release);
+                sampler::start(hwnd);
+                crate::util::trace("sampler started");
+                lists::on_open(a);
+            }
             if a.settings.topmost {
                 SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
             }
@@ -1381,15 +1269,15 @@ pub(super) unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, l
         }
         WM_SETTINGCHANGE => {
             if let Some(a) = app_opt() {
-                a.th = Theme::load();
-                apply_frame(hwnd, a.th.dark);
-                a.invalidate();
+                a.refresh_theme();
             }
         }
         WM_DWMCOLORIZATIONCOLORCHANGED => {
             if let Some(a) = app_opt() {
-                a.th = Theme::load();
-                a.invalidate();
+                if a.th.use_mica() {
+                    a.th = Theme::load(a.settings.theme);
+                    a.invalidate();
+                }
             }
         }
         WM_ACTIVATE => {

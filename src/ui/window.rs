@@ -13,7 +13,9 @@ const ICON: usize = 1;
 pub enum Purpose {
     App,
     /// Never shown, never activated.
-    Offscreen,
+    Offscreen {
+        demo: bool,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -39,9 +41,9 @@ pub fn app_icon(pixels: i32) -> isize {
 }
 
 pub fn create(purpose: Purpose, at: Bounds) -> Option<HWND> {
-    let (class, extended) = match purpose {
-        Purpose::App => (product::WINDOW_CLASS, 0),
-        Purpose::Offscreen => (product::OFFSCREEN_CLASS, wm::WS_EX_NOACTIVATE | wm::WS_EX_TOOLWINDOW),
+    let (class, extended, demo) = match purpose {
+        Purpose::App => (product::WINDOW_CLASS, 0, false),
+        Purpose::Offscreen { demo } => (product::OFFSCREEN_CLASS, wm::WS_EX_NOACTIVATE | wm::WS_EX_TOOLWINDOW, demo),
     };
     let (class, caption) = (wide(class), wide(product::NAME));
     unsafe {
@@ -61,7 +63,9 @@ pub fn create(purpose: Purpose, at: Bounds) -> Option<HWND> {
         wm::RegisterClassExW(&definition);
 
         let Bounds { left, top, width, height } = at;
-        let (parent, menu, extra) = (std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null());
+        let parent = std::ptr::null_mut();
+        let menu = std::ptr::null_mut();
+        let extra = if demo { std::ptr::from_ref(&demo).cast() } else { std::ptr::null() };
         let style = wm::WS_OVERLAPPEDWINDOW;
         let window = wm::CreateWindowExW(
             extended,

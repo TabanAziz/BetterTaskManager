@@ -5,8 +5,8 @@
 1 RT_MANIFEST "../resources/btm.manifest"
 
 1 VERSIONINFO
- PRODUCTVERSION 1,0,0,0
- FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,1,0,0
+ FILEVERSION 1,1,0,0
  FILEOS 0x40004L
  FILETYPE 0x1L
 BEGIN
@@ -22,8 +22,8 @@ BEGIN
       VALUE "FileDescription", "Better Task Manager Setup"
       VALUE "InternalName", "BTM-Setup"
       VALUE "OriginalFilename", "BTM-Setup.exe"
-      VALUE "ProductVersion", "1.0.0"
-      VALUE "FileVersion", "1.0.0"
+      VALUE "ProductVersion", "1.1.0"
+      VALUE "FileVersion", "1.1.0"
       VALUE "CompanyName", "TabanAziz"
       VALUE "LegalCopyright", "MIT License"
     END

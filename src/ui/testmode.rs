@@ -4,27 +4,36 @@
 
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
-use super::{app_opt, Page};
+use super::{app_opt, Page, ThemePreference};
 
 pub fn render(out: &str, spec: &str) {
-    if !cfg!(feature = "demo") && spec.contains("demo=") {
-        // Never hand out real data where invented data was asked for.
-        return;
-    }
-    super::settings::NO_SAVE.store(true, std::sync::atomic::Ordering::Relaxed);
     let mut kv = std::collections::HashMap::new();
     for part in spec.split(';') {
         if let Some((k, v)) = part.split_once('=') {
             kv.insert(k.trim().to_string(), v.trim().to_string());
         }
     }
+    let demo = kv.contains_key("demo");
+    if demo && !cfg!(feature = "demo") {
+        // Never hand out real data where invented data was asked for.
+        return;
+    }
+    super::settings::NO_SAVE.store(true, std::sync::atomic::Ordering::Relaxed);
     let get = |k: &str, d: i32| kv.get(k).and_then(|v| v.parse::<i32>().ok()).unwrap_or(d);
     let w = get("w", 1257);
     let h = get("h", 860);
     let wait = get("wait", 2500) as u64;
     unsafe {
         let bounds = super::window::Bounds { left: 0, top: 0, width: w, height: h };
-        let Some(hwnd) = super::window::create(super::window::Purpose::Offscreen, bounds) else { return };
+        let purpose = super::window::Purpose::Offscreen { demo };
+        let Some(hwnd) = super::window::create(purpose, bounds) else { return };
+        if let Some(a) = app_opt() {
+            if let Some(theme) = kv.get("theme").and_then(|key| ThemePreference::from_key(key)) {
+                a.set_theme(theme);
+            } else if kv.get("light").is_some_and(|v| v == "1") {
+                a.set_theme(ThemePreference::Light);
+            }
+        }
         if let Some(secs) = kv.get("bench").and_then(|v| v.parse::<u64>().ok()) {
             bench(out, secs);
             DestroyWindow(hwnd);
@@ -80,9 +89,6 @@ fn apply(kv: &std::collections::HashMap<String, String>) {
     let Some(a) = app_opt() else { return };
     // The render window has no saved preferences of its own: keep them neutral.
     a.settings.nav_expanded = true;
-    if kv.get("light").map(|v| v == "1").unwrap_or(false) && a.th.dark {
-        a.th = super::Theme::load_variant(true);
-    }
     if let Some(p) = kv.get("page") {
         let page = match p.as_str() {
             "perf" => Page::Perf,
@@ -94,7 +100,11 @@ fn apply(kv: &std::collections::HashMap<String, String>) {
             "services" => Page::Services,
             _ => Page::Procs,
         };
-        a.set_page(page);
+        if kv.contains_key("demo") {
+            a.page = page;
+        } else {
+            a.set_page(page);
+        }
     }
     if let Some(s) = kv.get("search") {
         a.search = s.clone();

@@ -648,7 +648,7 @@ impl App {
         let bh = self.px(36.0);
         let bx = x + self.px(12.0);
         let bw = w - self.px(24.0);
-        let bg = if self.th.dark { 0x2B2B2B } else { 0xF0F0F0 };
+        let bg = self.th.color_for(0x2B2B2B, 0xF0F0F0, self.th.search_bg);
         self.cv.round_rect(bx as f32, y as f32, bw as f32, bh as f32, self.px(4.0) as f32, bg, 1.0);
         let fi = self.f.icon;
         let acc = self.th.accent;
@@ -671,7 +671,7 @@ impl App {
             c,
             1.0,
         );
-        self.cv.text(fb, "Set up", (bx2, y, btn_w, bh), 0x000000, DT_C);
+        self.cv.text(fb, "Set up", (bx2, y, btn_w, bh), self.th.accent_text(), DT_C);
         self.hit(bx2, y + self.px(4.0), btn_w, bh - self.px(8.0), Hit::InfoSetup);
         let cx = bx + bw - close_w;
         if self.hover == Hit::InfoClose {
@@ -681,7 +681,7 @@ impl App {
                 (close_w - self.px(4.0)) as f32,
                 (bh - self.px(8.0)) as f32,
                 self.px(4.0) as f32,
-                0x3A3A3A,
+                self.th.color_for(0x3A3A3A, 0x3A3A3A, self.th.header_hot),
                 1.0,
             );
         }
@@ -704,9 +704,10 @@ impl App {
         let bh = self.px(36.0);
         let bx = x + (w - tw) / 2;
         let by = y + h - bh - self.px(16.0);
-        let bg = if self.th.dark { 0x2C2C2C } else { 0xFFFFFF };
+        let bg = self.th.color_for(0x2C2C2C, 0xFFFFFF, self.th.search_bg);
         self.cv.round_rect(bx as f32, by as f32, tw as f32, bh as f32, self.px(6.0) as f32, bg, 1.0);
-        self.cv.round_rect_outline(bx as f32, by as f32, tw as f32, bh as f32, self.px(6.0) as f32, 0x444444, 1.0);
+        let edge = self.th.color_for(0x444444, 0x444444, self.th.divider);
+        self.cv.round_rect_outline(bx as f32, by as f32, tw as f32, bh as f32, self.px(6.0) as f32, edge, 1.0);
         let tc = self.th.text;
         self.cv.text(fb, &msg, (bx, by, tw, bh), tc, DT_C);
         unsafe { SetTimer(self.hwnd, 99, 4100, Some(toast_timer)) };
@@ -838,7 +839,8 @@ impl App {
                         bg = self.th.heat[0];
                     }
                     self.cv.fill(x0, ry, cw, rh, bg);
-                    let line = mix(bg, 0x484848, 0.4);
+                    let edge = self.th.color_for(0x484848, 0x484848, divider);
+                    let line = mix(bg, edge, 0.4);
                     self.cv.vline(x0, ry, rh, line);
                 }
                 if overlay > 0.0 {
@@ -928,7 +930,7 @@ impl App {
             let thumb_h = ((body_h as f32 / content) * body_h as f32).max(self.px(24.0) as f32);
             let ty = body_y as f32 + (scroll / (content - body_h as f32)) * (body_h as f32 - thumb_h);
             if hov {
-                let tb = if dark { 0x202020 } else { 0xEEEEEE };
+                let tb = self.th.color_for(0x202020, 0xEEEEEE, self.th.search_bg);
                 self.cv.round_rect(
                     (x + w - self.px(12.0)) as f32,
                     body_y as f32,
@@ -939,7 +941,7 @@ impl App {
                     1.0,
                 );
             }
-            let tcol = if dark { 0x959595 } else { 0x8A8A8A };
+            let tcol = self.th.color_for(0x959595, 0x8A8A8A, self.th.text2);
             self.cv.round_rect(tx as f32, ty, tw as f32, thumb_h, tw as f32 / 2.0, tcol, 1.0);
             self.hit(x + w - sb_w, body_y, sb_w, body_h, Hit::VScroll(page));
         }

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0 - 2026-11-24
+
+- Choose System, Light, Dark or one of six BetterExplorer themes in Settings.
+- Deep Space, Paper White, Candy Rush, Frost, Eclipse and Cyber Grid bring their colors and title bar motifs across the app.
+- Theme changes apply immediately and are remembered when BTM reopens.
+
 ## 1.0.0 - 2026-11-22
 
 First release.

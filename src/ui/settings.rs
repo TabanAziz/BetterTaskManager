@@ -9,11 +9,12 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use super::gfx::*;
 use super::procs::{menu_item, popup, ColId};
-use super::{App, Hit, Page, Settings};
+use super::{App, Hit, Page, Settings, ThemePreference};
 use crate::model::HelperState;
 use crate::util::wide;
 
 const KEY: &str = crate::product::SETTINGS_KEY;
+const THEME_PICKER: u32 = 11;
 
 fn get_dword(name: &str) -> Option<u32> {
     let k = wide(KEY);
@@ -67,7 +68,15 @@ fn set_string(name: &str, s: &str) {
 }
 
 pub fn load() -> Settings {
-    let page = match get_dword("StartPage").unwrap_or(0) {
+    read(get_dword, get_string)
+}
+
+pub fn defaults() -> Settings {
+    read(|_| None, |_| None)
+}
+
+fn read(dword: impl Fn(&str) -> Option<u32>, string: impl Fn(&str) -> Option<String>) -> Settings {
+    let page = match dword("StartPage").unwrap_or(0) {
         1 => Page::Perf,
         2 => Page::Details,
         3 => Page::History,
@@ -76,7 +85,7 @@ pub fn load() -> Settings {
         6 => Page::Services,
         _ => Page::Procs,
     };
-    let placement = get_string("Placement").and_then(|s| {
+    let placement = string("Placement").and_then(|s| {
         let v: Vec<i32> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
         if v.len() == 4 && v[2] > v[0] + 200 && v[3] > v[1] + 150 {
             Some(RECT { left: v[0], top: v[1], right: v[2], bottom: v[3] })
@@ -85,14 +94,15 @@ pub fn load() -> Settings {
         }
     });
     Settings {
+        theme: string("Theme").as_deref().and_then(ThemePreference::from_key).unwrap_or_default(),
         start_page: page,
-        interval_ms: get_dword("IntervalMs").filter(|v| matches!(v, 0 | 500 | 1000 | 4000)).unwrap_or(1000),
-        topmost: get_dword("Topmost").unwrap_or(0) != 0,
-        hint_dismissed: get_dword("HintDismissed").unwrap_or(0) != 0,
-        cpu_logical: get_dword("CpuLogical").unwrap_or(0) != 0,
+        interval_ms: dword("IntervalMs").filter(|v| matches!(v, 0 | 500 | 1000 | 4000)).unwrap_or(1000),
+        topmost: dword("Topmost").unwrap_or(0) != 0,
+        hint_dismissed: dword("HintDismissed").unwrap_or(0) != 0,
+        cpu_logical: dword("CpuLogical").unwrap_or(0) != 0,
         placement,
-        maximized: get_dword("Maximized").unwrap_or(0) != 0,
-        nav_expanded: get_dword("NavExpanded").unwrap_or(1) != 0,
+        maximized: dword("Maximized").unwrap_or(0) != 0,
+        nav_expanded: dword("NavExpanded").unwrap_or(1) != 0,
     }
 }
 
@@ -171,6 +181,7 @@ pub fn save(a: &mut App) {
     if NO_SAVE.load(Ordering::Relaxed) {
         return;
     }
+    set_string("Theme", a.settings.theme.key());
     set_dword(
         "StartPage",
         match a.settings.start_page {
@@ -238,6 +249,7 @@ fn helper_state(a: &App) -> HelperState {
 pub fn click(a: &mut App, id: u32) {
     match id {
         10 => pick_start_page(a),
+        THEME_PICKER => pick_theme(a),
         20 => set_interval(a, 500),
         21 => set_interval(a, 1000),
         22 => set_interval(a, 4000),
@@ -285,6 +297,21 @@ fn pick_start_page(a: &mut App) {
     }
 }
 
+fn pick_theme(a: &mut App) {
+    let menu = unsafe { CreatePopupMenu() };
+    for (i, theme) in ThemePreference::ALL.into_iter().enumerate() {
+        if theme == ThemePreference::DeepSpace {
+            unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()) };
+        }
+        menu_item(menu, i + 1, theme.label(), true, theme == a.settings.theme);
+    }
+    let picked = popup(a, menu);
+    if let Some(&theme) = picked.checked_sub(1).and_then(|i| ThemePreference::ALL.get(i)) {
+        a.set_theme(theme);
+        save(a);
+    }
+}
+
 pub fn more_menu(a: &mut App) {
     let m = unsafe { CreatePopupMenu() };
     menu_item(m, 1, "Refresh now\tF5", true, false);
@@ -320,13 +347,8 @@ impl App {
         for (label, id, on) in items {
             let w = self.cv.text_width(fb, label) + self.px(28.0);
             let hov = self.hover == Hit::Setting(*id);
-            let (bg, fg) = if *on {
-                (self.th.accent, 0x000000)
-            } else if self.th.dark {
-                (if hov { 0x3A3A3A } else { 0x2D2D2D }, self.th.text)
-            } else {
-                (if hov { 0xE8E8E8 } else { 0xF3F3F3 }, self.th.text)
-            };
+            let (bg, fg) =
+                if *on { (self.th.accent, self.th.accent_text()) } else { (self.th.control_bg(hov), self.th.text) };
             self.cv.round_rect(cx as f32, y as f32, w as f32, h as f32, self.px(4.0) as f32, bg, 1.0);
             self.cv.text(fb, label, (cx, y, w, h), fg, DT_C);
             self.hit(cx, y, w, h, Hit::Setting(*id));
@@ -347,7 +369,7 @@ impl App {
                 (h - self.px(8.0)) as f32,
                 (h - self.px(8.0)) as f32,
                 r,
-                0x000000,
+                self.th.accent_text(),
                 1.0,
             );
         } else {
@@ -367,7 +389,7 @@ impl App {
     }
 
     fn card(&mut self, x: i32, y: i32, w: i32, h: i32, title: &str, desc: &str) {
-        let bg = if self.th.dark { 0x232323 } else { 0xFFFFFF };
+        let bg = self.th.color_for(0x232323, 0xFFFFFF, self.th.search_bg);
         self.cv.round_rect(x as f32, y as f32, w as f32, h as f32, self.px(6.0) as f32, bg, 1.0);
         let fb = self.f.body;
         let fs = self.f.small;
@@ -383,6 +405,9 @@ impl App {
         let top = self.page_header(x, y, w, "Settings", &[]);
         let cx = x + self.px(16.0);
         let cw = (w - self.px(32.0)).min(self.px(760.0));
+        let label = format!("Theme: {}   \u{25BE}", self.settings.theme.label());
+        let bw = self.cv.text_width(self.f.body, &label) + self.px(28.0);
+        self.segmented(cx + cw - bw, y + self.px(10.0), &[(&label, THEME_PICKER, false)]);
         let mut cy = top + self.px(4.0);
         let gap = self.px(8.0);
 
@@ -444,9 +469,9 @@ impl App {
             let bh = self.px(32.0);
             let hov = self.hover == Hit::Setting(id);
             let (bg, fg) = if installed {
-                (if hov { 0x3A3A3A } else { 0x2D2D2D }, self.th.text)
+                (self.th.control_bg(hov), self.th.text)
             } else {
-                (if hov { self.th.accent } else { self.th.accent_strong }, 0x000000)
+                (if hov { self.th.accent } else { self.th.accent_strong }, self.th.accent_text())
             };
             self.cv.round_rect(bx as f32, by as f32, bw as f32, bh as f32, self.px(4.0) as f32, bg, 1.0);
             self.cv.text(fb, label, (bx, by, bw, bh), fg, DT_C);
