@@ -546,16 +546,46 @@ pub fn uninstall() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 
     #[test]
     fn helper_accepts_only_objects_of_the_user() {
         unsafe {
             let name = wide(&format!(r"Local\BetterTaskManager.Test.{}", std::process::id()));
-            let none = std::ptr::null();
-            let created = CreateFileMappingW(INVALID_HANDLE_VALUE, none, PAGE_READWRITE, 0, 4096, name.as_ptr());
+            let sid = current_user_sid().expect("current user SID");
+            // Elevated Windows test runners can default to the Administrators group
+            // as owner. Set the desired owner and restrict the fixture to this user.
+            let sddl = wide(&format!("O:{sid}D:P(A;;GA;;;{sid})"));
+            let mut descriptor = std::ptr::null_mut();
+            assert_ne!(
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    sddl.as_ptr(),
+                    SDDL_REVISION_1,
+                    &mut descriptor,
+                    std::ptr::null_mut(),
+                ),
+                0,
+                "could not create test security descriptor: {}",
+                std::io::Error::last_os_error(),
+            );
+            let attrs = SECURITY_ATTRIBUTES {
+                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+                lpSecurityDescriptor: descriptor,
+                bInheritHandle: 0,
+            };
+            let created = CreateFileMappingW(INVALID_HANDLE_VALUE, &attrs, PAGE_READWRITE, 0, 4096, name.as_ptr());
+            let create_error = std::io::Error::last_os_error();
+            LocalFree(descriptor);
+            assert!(!created.is_null(), "could not create test mapping: {create_error}");
             let opened = OpenFileMappingW(FILE_MAP_WRITE | READ_CONTROL, 0, name.as_ptr());
-            assert!(owned_by(opened, &current_user_sid().expect("sid")));
-            assert!(!owned_by(opened, "S-1-5-18"));
+            assert!(!opened.is_null(), "could not open test mapping: {}", std::io::Error::last_os_error());
+            assert!(owned_by(opened, &sid));
+            let other = if sid == "S-1-5-18" { "S-1-5-32-544" } else { "S-1-5-18" };
+            assert!(!owned_by(opened, other));
             let view = MapViewOfFile(opened, FILE_MAP_WRITE, 0, 0, 4096);
             assert!(!view.Value.is_null());
             UnmapViewOfFile(view);
