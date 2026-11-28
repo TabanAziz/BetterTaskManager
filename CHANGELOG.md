@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.2
+
+- Use the standard Windows title bar so its Close, Minimize and Maximize buttons are independent of the app’s custom backdrop. The search field stays at the top of the app.
+
 ## 1.1.1
 
 - Removed the duplicate app icon and title below the Windows title bar.
