@@ -1,0 +1,35 @@
+name: Windows
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Use stable Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - name: Build and verify release packages
+        shell: powershell
+        run: ./tools/release.ps1
+      - name: Check native close button
+        shell: powershell
+        run: |
+          $zip = Get-ChildItem dist/BTM-*-portable.zip
+          if (@($zip).Count -ne 1) { throw 'Expected one portable app archive.' }
+          $portable = Join-Path $env:RUNNER_TEMP 'btm-portable'
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath $portable
+          ./tools/check-caption.ps1 -Executable (Join-Path $portable 'BTM.exe')
+      - name: Upload verified packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: better-task-manager-windows
+          path: dist/
+          if-no-files-found: error
