@@ -1,6 +1,5 @@
-// Main window: Task Manager style shell (Mica title bar + navigation, content panel),
-// all drawn into one back buffer. No child controls, so nothing flickers and painting
-// a full frame costs about a millisecond.
+// Windows owns the native title bar; the search strip, navigation and content
+// are drawn into one client-area back buffer without child controls.
 
 #[cfg(feature = "demo")]
 mod demo;
@@ -24,7 +23,7 @@ use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Dwm::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::UI::Controls::{MARGINS, WM_MOUSELEAVE};
-use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
+use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -343,7 +342,7 @@ impl App {
                 self.cv.fill(0, 0, w, th, self.th.title_bg);
             }
         }
-        self.draw_titlebar(w);
+        self.draw_search_strip(w);
         self.draw_nav(h);
         if mica {
             self.cv.premultiply_from_black(0, 0, w, th);
@@ -398,13 +397,13 @@ impl App {
         self.paint_stats[4] += 1.0;
     }
 
-    fn draw_titlebar(&mut self, w: i32) {
+    fn draw_search_strip(&mut self, w: i32) {
         let s = self.s;
         let fg = self.th.chrome_fg;
         let (x, y, sw, sh) = self.search_rect();
         theme_visuals::paint_motif(
             self.cv.hdc,
-            RECT { left: x + sw + self.px(12.0), top: 0, right: w - self.px(152.0), bottom: self.title_h() },
+            RECT { left: x + sw + self.px(12.0), top: 0, right: w - self.px(12.0), bottom: self.title_h() },
             &self.th,
             s,
         );
@@ -1067,13 +1066,6 @@ fn enable_dark_menus(hwnd: HWND, preference: ThemePreference, dark: bool) {
 
 // ---------------------------------------------------------------------- window plumbing
 
-fn frame_metrics(dpi: u32) -> (i32, i32) {
-    unsafe {
-        let pad = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
-        (GetSystemMetricsForDpi(SM_CXFRAME, dpi) + pad, GetSystemMetricsForDpi(SM_CYFRAME, dpi) + pad)
-    }
-}
-
 unsafe fn apply_frame(hwnd: HWND, theme: &Theme) {
     let set = |attribute: DWMWINDOWATTRIBUTE, value: u32| {
         DwmSetWindowAttribute(hwnd, attribute as u32, (&value as *const u32).cast(), 4);
@@ -1085,63 +1077,18 @@ unsafe fn apply_frame(hwnd: HWND, theme: &Theme) {
     set(DWMWA_CAPTION_COLOR, window_color(theme.title_bg));
     set(DWMWA_TEXT_COLOR, window_color(theme.chrome_fg));
     set(DWMWA_BORDER_COLOR, window_color(theme.divider));
-    let m = MARGINS { cxLeftWidth: -1, cxRightWidth: -1, cyTopHeight: -1, cyBottomHeight: -1 };
+    // Extend the backdrop only, without overriding the native caption layout.
+    let edge = if mica { -1 } else { 0 };
+    let m = MARGINS { cxLeftWidth: edge, cxRightWidth: edge, cyTopHeight: edge, cyBottomHeight: edge };
     DwmExtendFrameIntoClientArea(hwnd, &m);
 }
 
 pub(super) unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    // Let DWM handle the caption buttons it draws in our extended frame.
-    // Only non-client messages: in the client area DWM would otherwise swallow clicks.
-    let mut lr: LRESULT = 0;
-    let nc = msg == WM_NCHITTEST || (0x00A0..=0x00AD).contains(&msg) || msg == 0x02A0 || msg == 0x02A2;
-    if nc && DwmDefWindowProc(hwnd, msg, wp, lp, &mut lr) != 0 {
-        return lr;
-    }
+    // Leave non-client calculation, painting and hit-testing to Windows. The
+    // close button must not depend on how the client backdrop is composited.
     match msg {
         WM_NCCREATE => {
             crate::util::trace("WM_NCCREATE");
-        }
-        WM_NCCALCSIZE if wp != 0 => {
-            crate::util::trace("WM_NCCALCSIZE");
-            let p = &mut *(lp as *mut NCCALCSIZE_PARAMS);
-            let dpi = GetDpiForWindow(hwnd);
-            let (fx, fy) = frame_metrics(dpi);
-            let r = &mut p.rgrc[0];
-            r.left += fx;
-            r.right -= fx;
-            r.bottom -= fy;
-            if IsZoomed(hwnd) != 0 {
-                r.top += fy;
-            }
-            return 0;
-        }
-        WM_NCHITTEST => {
-            let def = DefWindowProcW(hwnd, msg, wp, lp);
-            if def != HTCLIENT as isize {
-                return def;
-            }
-            let Some(a) = app_opt() else { return def };
-            let mut pt = POINT { x: (lp & 0xFFFF) as i16 as i32, y: ((lp >> 16) & 0xFFFF) as i16 as i32 };
-            ScreenToClient(hwnd, &mut pt);
-            let (fx, fy) = frame_metrics(a.dpi);
-            let (w, _) = a.client();
-            if IsZoomed(hwnd) == 0 && pt.y < fy {
-                return if pt.x < fx * 2 {
-                    HTTOPLEFT as isize
-                } else if pt.x > w - fx * 2 {
-                    HTTOPRIGHT as isize
-                } else {
-                    HTTOP as isize
-                };
-            }
-            if pt.y < a.title_h() {
-                let (sx, sy, sw, sh) = a.search_rect();
-                if pt.x >= sx && pt.x < sx + sw && pt.y >= sy && pt.y < sy + sh {
-                    return HTCLIENT as isize;
-                }
-                return HTCAPTION as isize;
-            }
-            return HTCLIENT as isize;
         }
         WM_CREATE => {
             crate::util::trace("WM_CREATE");
@@ -1206,8 +1153,6 @@ pub(super) unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, l
             if a.settings.topmost {
                 SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
             }
-            // (WM_NCCALCSIZE is handled from the very first message, so no
-            // SWP_FRAMECHANGED round trip is needed here - it cost ~45 ms.)
             crate::util::trace("WM_CREATE done");
             return 0;
         }
